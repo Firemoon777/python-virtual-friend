@@ -2,3 +2,6 @@ python-telegram-bot
 openai
 requests
 pydantic
+transformers
+torchaudio
+speechbrain
