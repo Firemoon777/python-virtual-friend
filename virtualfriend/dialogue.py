@@ -126,7 +126,7 @@ class OpenAI(IGPT):
 
 
 # Change parent to GPTJ or OpenAI
-class DialogueCore(OpenAI):
+class DialogueCore(GPTJ):
     def reply(self, prompt: PromptModel):
         prompt.data_out = self.text(prompt.full_prompt()).strip()
         prompt.emotions = EmotionModel.from_classifier(self.emotion_classifier(prompt.data_out)[0])

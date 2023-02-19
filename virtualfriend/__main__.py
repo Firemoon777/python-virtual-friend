@@ -79,7 +79,7 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sentence_wavs.append((wav_file, wav_length, emotional))
 
     wav_file = Path(f"/tmp/{update.message.from_user.id}_{update.message.id}.wav")
-    cmd = "sox " + " ".join([str(p.absolute()) + " /tmp/silence.wav" for p, _, _ in sentence_wavs]) + " " + str(wav_file.absolute())
+    cmd = "sox " + " ".join([str(p.absolute()) for p, _, _ in sentence_wavs]) + " " + str(wav_file.absolute())
     os.system(cmd)
 
     for p, _, _ in sentence_wavs:
