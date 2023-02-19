@@ -137,14 +137,6 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     merge_file.unlink()
 
 
-async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_chat_action(ChatAction.RECORD_VIDEO_NOTE)
-
-    time.sleep(3)
-
-    await update.message.reply_video_note("/tmp/62767803_591.merge.mp4")
-
-
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "context" in context.user_data:
         del context.user_data["context"]
