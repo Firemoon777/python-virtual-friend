@@ -3,6 +3,7 @@
 Uses a couple of neural networks to produce response as video notes.
 
 For education purposes.
+Inspired by [hackdaddy8000/unsuperior-ai-waifu](https://github.com/hackdaddy8000/unsuperior-ai-waifu)
 
 ## Collection
 
