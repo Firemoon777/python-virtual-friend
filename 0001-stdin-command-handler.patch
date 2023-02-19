@@ -1,0 +1,297 @@
+From 2d830e468e99f7d5faa859352f813a601262fcf3 Mon Sep 17 00:00:00 2001
+From: Vladimir Turov <firemoon@icloud.com>
+Date: Sun, 19 Feb 2023 11:24:10 +0300
+Subject: [PATCH] stdin command handler
+
+---
+ .../Demo/proj.linux.cmake/src/LAppDefine.cpp  |  4 +-
+ .../proj.linux.cmake/src/LAppDelegate.cpp     | 64 ++++++++++++++++++-
+ .../proj.linux.cmake/src/LAppDelegate.hpp     |  2 +-
+ .../src/LAppLive2DManager.cpp                 |  5 +-
+ .../Demo/proj.linux.cmake/src/LAppModel.cpp   |  4 ++
+ .../Demo/proj.linux.cmake/src/LAppModel.hpp   |  2 +
+ .../Demo/proj.linux.cmake/src/LAppPal.cpp     |  5 ++
+ .../Demo/proj.linux.cmake/src/LAppView.cpp    |  4 +-
+ .../OpenGL/Demo/proj.linux.cmake/src/main.cpp |  2 +-
+ .../Demo/proj.linux.cmake/src/mainMinimum.cpp | 23 ++++++-
+ 10 files changed, 104 insertions(+), 11 deletions(-)
+
+diff --git a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDefine.cpp b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDefine.cpp
+index 7eec069..082f739 100644
+--- a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDefine.cpp
++++ b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDefine.cpp
+@@ -72,6 +72,6 @@ namespace LAppDefine {
+     const CubismFramework::Option::LogLevel CubismLoggingLevel = CubismFramework::Option::LogLevel_Verbose;
+ 
+     // デフォルトのレンダーターゲットサイズ
+-    const csmInt32 RenderTargetWidth = 1900;
+-    const csmInt32 RenderTargetHeight = 1000;
++    const csmInt32 RenderTargetWidth = 512;
++    const csmInt32 RenderTargetHeight = 512;
+ }
+diff --git a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDelegate.cpp b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDelegate.cpp
+index fad722f..3879649 100644
+--- a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDelegate.cpp
++++ b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDelegate.cpp
+@@ -16,6 +16,11 @@
+ #include "LAppDefine.hpp"
+ #include "LAppLive2DManager.hpp"
+ #include "LAppTextureManager.hpp"
++#include "LAppModel.hpp"
++
++#include <fcntl.h>
++
++#define TARGET_FPS 60
+ 
+ using namespace Csm;
+ using namespace std;
+@@ -140,8 +145,23 @@ void LAppDelegate::Release()
+     CubismFramework::Dispose();
+ }
+ 
+-void LAppDelegate::Run()
++void LAppDelegate::Run(char* filename)
+ {
++    char cmd[512];
++    snprintf(cmd, 512, "ffmpeg -r %i -f rawvideo -pix_fmt rgba -s %dx%d -i - "
++                      "-threads 0 -preset fast -y -pix_fmt yuv420p -crf 21 -vf vflip %s >/dev/null 2>/dev/null", TARGET_FPS, _windowWidth, _windowHeight, filename);
++
++    FILE* ffmpeg = popen(cmd, "w");
++    int* buffer = new int[_windowWidth*_windowHeight];
++
++    int flags = fcntl(0, F_GETFL, 0);
++    fcntl(0, F_SETFL, flags | O_NONBLOCK);
++
++    char _in[512];
++    unsigned int len = 0;
++    int ready = 0;
++    double lasttime = glfwGetTime();
++
+     //メインループ
+     while (glfwWindowShouldClose(_window) == GL_FALSE && !_isEnd)
+     {
+@@ -171,9 +191,51 @@ void LAppDelegate::Run()
+         // バッファの入れ替え
+         glfwSwapBuffers(_window);
+ 
++        glReadPixels(0, 0, _windowWidth, _windowHeight, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
++        fwrite(buffer, sizeof(int)*_windowWidth*_windowHeight, 1, ffmpeg);
++
++        char c;
++        int result = read(0, &c, 1);
++        while(result > 0) {
++            if(c == '\n') {
++                ready = 1;
++                _in[len] = '\0';
++                break;
++            } else {
++                _in[len] = c;
++                len++;
++                //printf("readed %c (%d) (len = %d)\n", c, result, len);
++            }
++            result = read(0, &c, 1);
++        }
++
++        if(ready == 1) {
++
++            if(_in[0] == 'e') {
++                printf("Expression -> %s\n", _in + 1);
++                LAppLive2DManager::GetInstance()->GetModel(0)->SetExpression(_in + 1);
++            }
++            if(_in[0] == 's') {
++                printf("LipSync -> %s\n", _in + 1);
++                LAppLive2DManager::GetInstance()->GetModel(0)->StartLipSync(_in + 1);
++            }
++            if(_in[0] == 'q') {
++                _isEnd = true;
++            }
++            
++            len = 0;
++            ready = 0;
++        }
++
++        while(glfwGetTime() < lasttime + 1.0f/TARGET_FPS) {
++
++        }
++        lasttime += 1.0f / TARGET_FPS;
++
+         // Poll for and process events
+         glfwPollEvents();
+     }
++    pclose(ffmpeg);
+ 
+     Release();
+ 
+diff --git a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDelegate.hpp b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDelegate.hpp
+index 721cc61..98192e0 100644
+--- a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDelegate.hpp
++++ b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppDelegate.hpp
+@@ -50,7 +50,7 @@ public:
+     /**
+     * @brief   実行処理。
+     */
+-    void Run();
++    void Run(char* filename);
+ 
+     /**
+     * @brief   OpenGL用 glfwSetMouseButtonCallback用関数。
+diff --git a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppLive2DManager.cpp b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppLive2DManager.cpp
+index 66cebe4..2320ed8 100644
+--- a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppLive2DManager.cpp
++++ b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppLive2DManager.cpp
+@@ -143,12 +143,13 @@ void LAppLive2DManager::OnUpdate() const
+         {
+             // 横に長いモデルを縦長ウィンドウに表示する際モデルの横サイズでscaleを算出する
+             model->GetModelMatrix()->SetWidth(2.0f);
+-            projection.Scale(1.0f, static_cast<float>(width) / static_cast<float>(height));
++            projection.Scale(3.0f, 3.0f * static_cast<float>(width) / static_cast<float>(height));
+         }
+         else
+         {
+-            projection.Scale(static_cast<float>(height) / static_cast<float>(width), 1.0f);
++            projection.Scale(3.0f * static_cast<float>(height) / static_cast<float>(width), 3.0f);
+         }
++        model->GetModelMatrix()->SetPosition(0.0f, -0.6f);
+ 
+         // 必要があればここで乗算
+         if (_viewMatrix != NULL)
+diff --git a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppModel.cpp b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppModel.cpp
+index 1790ee2..ae9df75 100644
+--- a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppModel.cpp
++++ b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppModel.cpp
+@@ -502,6 +502,10 @@ CubismMotionQueueEntryHandle LAppModel::StartMotion(const csmChar* group, csmInt
+     return  _motionManager->StartMotionPriority(motion, autoDelete, priority);
+ }
+ 
++void LAppModel::StartLipSync(csmString sound) {
++    _wavFileHandler.Start(sound);    
++}
++
+ CubismMotionQueueEntryHandle LAppModel::StartRandomMotion(const csmChar* group, csmInt32 priority, ACubismMotion::FinishedMotionCallback onFinishedMotionHandler)
+ {
+     if (_modelSetting->GetMotionCount(group) == 0)
+diff --git a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppModel.hpp b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppModel.hpp
+index 5b66365..0ce4b0f 100644
+--- a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppModel.hpp
++++ b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppModel.hpp
+@@ -114,6 +114,8 @@ public:
+      */
+     Csm::Rendering::CubismOffscreenFrame_OpenGLES2& GetRenderBuffer();
+ 
++    void StartLipSync(Live2D::Cubism::Framework::csmString sound);
++
+ protected:
+     /**
+      *  @brief  モデルを描画する処理。モデルを描画する空間のView-Projection行列を渡す。
+diff --git a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppPal.cpp b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppPal.cpp
+index a66093a..50072bc 100644
+--- a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppPal.cpp
++++ b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppPal.cpp
+@@ -17,6 +17,9 @@
+ #include <Model/CubismMoc.hpp>
+ #include "LAppDefine.hpp"
+ 
++#include <errno.h>
++#include <string.h>
++
+ using std::endl;
+ using namespace Csm;
+ using namespace std;
+@@ -48,6 +51,8 @@ csmByte* LAppPal::LoadFileAsBytes(const string filePath, csmSizeInt* outSize)
+         if (DebugLogEnable)
+         {
+             PrintLog("file open error");
++            PrintLog("[%s]", path);
++            PrintLog(strerror(errno));
+         }
+         return NULL;
+     }
+diff --git a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppView.cpp b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppView.cpp
+index 108d357..2e1fe8b 100644
+--- a/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppView.cpp
++++ b/Samples/OpenGL/Demo/proj.linux.cmake/src/LAppView.cpp
+@@ -158,8 +158,8 @@ void LAppView::InitializeSprite()
+ 
+     float x = width * 0.5f;
+     float y = height * 0.5f;
+-    float fWidth = static_cast<float>(backgroundTexture->width * 2.0f);
+-    float fHeight = static_cast<float>(height) * 0.95f;
++    float fWidth = static_cast<float>(backgroundTexture->width * 1.0f);
++    float fHeight = static_cast<float>(height) * 1.0f;
+     _back = new LAppSprite(x, y, fWidth, fHeight, backgroundTexture->id, _programId);
+ 
+     imageName = GearImageName;
+diff --git a/Samples/OpenGL/Demo/proj.linux.cmake/src/main.cpp b/Samples/OpenGL/Demo/proj.linux.cmake/src/main.cpp
+index b65c1f0..7583b1d 100644
+--- a/Samples/OpenGL/Demo/proj.linux.cmake/src/main.cpp
++++ b/Samples/OpenGL/Demo/proj.linux.cmake/src/main.cpp
+@@ -15,7 +15,7 @@ int main(int argc, char* argv[])
+         return 1;
+     }
+ 
+-    LAppDelegate::GetInstance()->Run();
++    LAppDelegate::GetInstance()->Run(argv[1]);
+ 
+     return 0;
+ }
+diff --git a/Samples/OpenGL/Demo/proj.linux.cmake/src/mainMinimum.cpp b/Samples/OpenGL/Demo/proj.linux.cmake/src/mainMinimum.cpp
+index 342a2e6..ee2ca02 100644
+--- a/Samples/OpenGL/Demo/proj.linux.cmake/src/mainMinimum.cpp
++++ b/Samples/OpenGL/Demo/proj.linux.cmake/src/mainMinimum.cpp
+@@ -4,6 +4,7 @@
+  * Use of this source code is governed by the Live2D Open Software license
+  * that can be found at https://www.live2d.com/eula/live2d-open-software-license-agreement_en.html.
+  */
++#include <errno.h>
+ 
+ #include <functional>
+ 
+@@ -188,8 +189,10 @@ static bool InitializeSystem()
+     glfwSetCursorPosCallback(_window, EventHandler::OnMouseCallBack);
+ 
+     // ウィンドウサイズ記憶
+-    glfwGetWindowSize(_window, &windowWidth, &windowHeight);
+-    glViewport(0, 0, windowWidth, windowHeight);
++    //glfwGetWindowSize(_window, &windowWidth, &windowHeight);
++    windowWidth = 512;
++    windowHeight = 512;
++    glViewport(0, 0, 512, 512);
+ 
+     // Cubism SDK の初期化
+     InitializeCubism();
+@@ -257,6 +260,18 @@ void LoadModel(const std::string modelDirectoryName)
+ 
+ void Run()
+ {
++    char cmd[512];
++    snprintf(cmd, 512, "ffmpeg -r 60 -f rawvideo -pix_fmt rgba -s %dx%d -i - "
++                      "-threads 0 -preset fast -y -pix_fmt yuv420p -crf 21 -vf vflip output.mp4", windowWidth, windowHeight);
++    printf(cmd);
++
++    FILE* ffmpeg = popen(cmd, "w");
++    if(ffmpeg == nullptr) {
++        printf("errno %i, %s\n", errno, strerror(errno));
++        return;
++    }
++    int* buffer = new int[windowWidth*windowHeight];
++
+     //メインループ
+     while (glfwWindowShouldClose(_window) == GL_FALSE)
+     {
+@@ -293,9 +308,13 @@ void Run()
+         // バッファの入れ替え
+         glfwSwapBuffers(_window);
+ 
++        glReadPixels(0, 0, windowWidth, windowHeight, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
++        fwrite(buffer, sizeof(int)*windowWidth*windowHeight, 1, ffmpeg);
++
+         // Poll for and process events
+         glfwPollEvents();
+     }
++    pclose(ffmpeg);
+ }
+ 
+ int main()
+-- 
+2.25.1
+

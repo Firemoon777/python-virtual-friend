@@ -18,7 +18,6 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 
 from virtualfriend.dialogue import DialogueCore
 from virtualfriend.model import PromptModel, EmotionModel
-from virtualfriend.sd import generate_img2img
 
 import torchaudio
 from speechbrain.pretrained import Tacotron2
@@ -30,7 +29,8 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-openai.api_key = os.environ["OPENAI_TOKEN"]
+Live2DExecutable = os.environ["LIVE2D_EXECUTABLE"]
+openai.api_key = os.environ.get("OPENAI_TOKEN", "")
 DialogueCore(device="cuda:0", stop_words=["You:", "Friend:"])
 
 tacotron2 = Tacotron2.from_hparams(source="speechbrain/tts-tacotron2-ljspeech", savedir="tmpdir_tts", run_opts={"device":"cuda"})
@@ -40,13 +40,6 @@ hifi_gan = HIFIGAN.from_hparams(source="speechbrain/tts-hifigan-ljspeech", saved
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a bot, please talk to me!")
 
-
-# async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-#     await update.message.reply_chat_action(ChatAction.TYPING)
-#
-#     response = DialogueCore().text(update.message.text, max_new_tokens=500)
-#
-#     await update.message.reply_text(response)
 
 async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_chat_action(ChatAction.TYPING)
@@ -58,14 +51,13 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     prompt.data_in = update.message.text.strip()
     d = DialogueCore()
-    # result = d.reply(prompt)
+    result = d.reply(prompt)
 
-    # if not re.sub(r"[^A-Za-z ]*", "", result.data_out):
-    #     await update.message.reply_text(result.data_out)
-    #     return
+    if not re.sub(r"[^A-Za-z ]*", "", result.data_out):
+        await update.message.reply_text(result.data_out)
+        return
 
-    answer = "Once upon a time, a cat named Bob lived with his family. He was a happy cat who loved to play and nap. His family loved him very much and were always happy to see him. One day, Bob's family moved away and he never saw them again. But even though he didn't see them often, Bob always remembered how much they loved him and how happy he made them."
-    # answer = result.data_out
+    answer = result.data_out
 
     # Running the TTS
     logging.info("Generating wav...")
@@ -87,24 +79,19 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sentence_wavs.append((wav_file, wav_length, emotional))
 
     wav_file = Path(f"/tmp/{update.message.from_user.id}_{update.message.id}.wav")
-    cmd = "sox " + " ".join([str(p.absolute()) for p, _, _ in sentence_wavs]) + " " + str(wav_file.absolute())
-    print(cmd)
+    cmd = "sox " + " ".join([str(p.absolute()) + " /tmp/silence.wav" for p, _, _ in sentence_wavs]) + " " + str(wav_file.absolute())
     os.system(cmd)
 
     for p, _, _ in sentence_wavs:
         p.unlink()
     meta = torchaudio.info(wav_file)
 
-    if meta.num_frames / meta.sample_rate > 60:
-        # Video note time exceeded
-        return
-
     logging.info("Rendering video...")
     await update.message.reply_chat_action(ChatAction.RECORD_VIDEO_NOTE)
     video_file = Path(f"/tmp/{update.message.from_user.id}_{update.message.id}.mp4")
     p = subprocess.Popen(
         [
-            "/home/firemoon/CubismSdkForNative-4-r.5.1/Samples/OpenGL/Demo/proj.linux.cmake/build/make_gcc/bin/Demo/Demo",
+            Live2DExecutable,
             video_file.absolute()
         ],
         stdin=subprocess.PIPE,
@@ -124,9 +111,6 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p.stdin.flush()
         print(f"Waiting for {length}")
         time.sleep(length)
-
-    # print(f"Waiting for {meta.num_frames} / {meta.sample_rate} = {meta.num_frames / meta.sample_rate}s")
-    # time.sleep(max(meta.num_frames / meta.sample_rate, 1))
 
     p.stdin.write("q\n")
     p.stdin.flush()
@@ -148,30 +132,9 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_video_note(str(merge_file.absolute()))
 
-    # wav_file.unlink()
-    # video_file.unlink()
-    # merge_file.unlink()
-
-#     return
-#
-#     # caption = first_response + "\n\n"
-#     caption = ""
-#
-#     # await update.message.reply_text(first_response)
-#     print(gen(update.message.text))
-#
-#     request_emotions = emotion_task(update.message.text)[0]
-#     response_emotions = emotion_task(update.message.text)[0]
-#     emotion_dict = {e['label']: e['score'] for e in response_emotions if e['score'] > 0.5}
-#
-#     caption += "\n".join([f"{k}: {v:.2f}" for k, v in emotion_dict.items()])
-#
-#
-#     # modifier = " ".join([f"({k}:{v:.2f})" for k, v in emotion_dict.items()])
-#     # response = generate_img2img("portrait of beautiful woman " + modifier + " mountains")
-#     #
-#     # image = BytesIO(base64.b64decode(response.images[0]))
-#     # await update.message.reply_photo(image, caption)
+    wav_file.unlink()
+    video_file.unlink()
+    merge_file.unlink()
 
 
 async def demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
